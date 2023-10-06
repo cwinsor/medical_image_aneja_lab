@@ -123,12 +123,12 @@ class TrainUNet2D:
         self.valid_frequency = 'after each miniepoch'
 
         # Set project root path:
-        self.project_root = '/home/arman_avesta/capsnet'
+        self.project_root = '/mnt/d/code_medimg_aneja_lab'
         # Folder that contains datasets csv files:
         self.datasets_folder = 'data/datasets'
         # Folder to save model results:
         #                                                           vvvvvvvvvvvvvvvv Set the folder vvvvvvvvvvvvvvvv
-        self.results_folder = 'data/results/22.06.18_unet2d_rthal_train120'
+        self.results_folder = 'data/results/23.09.25_unet2d_rthal_train120'
 
         # csv file containing list of inputs for training:
         self.train_inputs_csv = 'train_inputs_120.csv'
@@ -143,7 +143,7 @@ class TrainUNet2D:
         self.niftis_folder = 'niftis'
 
         # Determine if backup to S3 should be done:
-        self.s3backup = True
+        self.s3backup = False
         # S3 bucket backup folder for results:
         self.s3_results_folder = 's3://aneja-lab-capsnet/projects/capsnet/' + self.results_folder
 
