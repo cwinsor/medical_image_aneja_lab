@@ -8,9 +8,14 @@
 
 # Project imports:
 
-from data_loader import AdniDataset, make_image_list
+# from data_loader import AdniDataset, make_image_list
+from data_set_uwmadison import DatasetUWMadison
+from sklearn.model_selection import StratifiedGroupKFold
+import albumentations as A
+from glob import glob
+import random
 from unet_model_2d import UNet2D
-from loss_functions import DiceLoss, SoftDiceLoss, DiceBCELoss
+from loss_functions import DiceLoss
 
 # System imports:
 
@@ -29,7 +34,72 @@ import matplotlib.pyplot as plt
 from dipy.io.image import save_nifti
 
 
+class CFG:
+    seed = 101
+    # debug         = False # set debug=False for Full Training
+    # exp_name      = '2.5D'
+    # comment       = 'unet-efficientnet_b0-160x192-ep=5'
+    # model_name    = 'Unet'
+    # backbone      = 'efficientnet-b0'
+    train_batch_size = 4
+    valid_batch_size = 8
+    img_size = [160, 192]
+    # epochs        = 5
+    # lr            = 2e-3
+    # scheduler     = 'CosineAnnealingLR'
+    # min_lr        = 1e-6
+    # T_max         = int(30000/train_bs*epochs)+50
+    # T_0           = 25
+    # warmup_epochs = 0
+    # wd            = 1e-6
+    # n_accumulate  = max(1, 32//train_bs)
+    n_fold = 5
+    # folds         = [0]
+    # num_classes   = 3
+    # device        = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+# reproducibility
+def set_seed(seed=42):
+    '''Sets the seed of the entire notebook so results are the same every time we run.
+    This is for REPRODUCIBILITY.'''
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # When running on the CuDNN backend, two further options must be set
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # Set a fixed value for the hash seed
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    print('> SEEDING DONE')
+
+
+set_seed(CFG.seed)
+
+data_transforms = {
+    "train": A.Compose([
+        # A.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
+        A.HorizontalFlip(p=0.5),
+        # A.VerticalFlip(p=0.5),
+        A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.05, rotate_limit=10, p=0.5),
+        A.OneOf([
+            A.GridDistortion(num_steps=5, distort_limit=0.05, p=1.0),
+            # A.OpticalDistortion(distort_limit=0.05, shift_limit=0.05, p=1.0),
+            A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=1.0)
+        ], p=0.25),
+        A.CoarseDropout(max_holes=8, max_height=CFG.img_size[0]//20, max_width=CFG.img_size[1]//20,
+                        min_holes=5, fill_value=0, mask_fill_value=0, p=0.5),
+        ], p=1.0),
+
+    "valid": A.Compose([
+        # A.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
+        ], p=1.0)
+}
+
+
 # ----------------------------------------------- TrainUNet3D class ------------------------------------------
+
 
 class TrainUNet2D:
 
@@ -103,20 +173,18 @@ class TrainUNet2D:
 
         # Number of training cases in each miniepoch:
         '''
-        Miniepoch: a unit of training after which validation is done. 
-        Since we have lots of training examples here (>3000), it's inefficient if we wait until after each 
+        Miniepoch: a unit of training after which validation is done.
+        Since we have lots of training examples here (>3000), it's inefficient if we wait until after each
         epoch to do validation. So I changed the paradigm to validation after each miniepoch rather than epoch:
-        miniepoch 1 --> validate / update learning rate / save stats / save plots / ±save model 
+        miniepoch 1 --> validate / update learning rate / save stats / save plots / ±save model
         --> miniepoch2 --> validate / update ...
         '''
         self.miniepoch_size_cases = 120
-        # Set training batch size:
-        self.train_batch_size = 4
         # Set if data augmentation should be done on training data:
         self.train_transforms = False
 
         # Set validation batch size:
-        self.valid_batch_size = 8
+        # CFG.valid_batch_size = 8
         # Set if data augmentation should be done on validation data:
         self.valid_transforms = False
         # Set validation frequency:
@@ -158,24 +226,86 @@ class TrainUNet2D:
         if saved_model_path is not None:
             self.load_model(saved_model_path)
 
-        # Load lists of training and validation inputs and outputs:
-        self.train_inputs = make_image_list(join(self.project_root, self.datasets_folder,
-                                                 self.train_inputs_csv))
-        self.train_outputs = make_image_list(join(self.project_root, self.datasets_folder,
-                                                  self.train_outputs_csv))
-        self.valid_inputs = make_image_list(join(self.project_root, self.datasets_folder,
-                                                 self.valid_inputs_csv))
-        self.valid_outputs = make_image_list(join(self.project_root, self.datasets_folder,
-                                                  self.valid_outputs_csv))
+        # path_df is a temporary dataframe: image_path and mask_path indexed by case_id
+        # it is merged into "df" below
+        #
+        # id            case101_day20_slice_0001
+        # image_path    /mnt/d/code_medimg_practice/medical_image_prac...
+        # mask_path     /mnt/d/code_medimg_practice/medical_image_prac...
+        #
+        path_df = pd.DataFrame(glob('/mnt/d/code_medimg_practice/medical_image_practice/04b_2pt5d/data_04/archive_image/images/images/*'), columns=['image_path'])
+        path_df['mask_path'] = path_df.image_path.str.replace('images/images', 'masks/masks')
+        path_df['id'] = path_df.image_path.map(lambda x: x.split('/')[-1].replace('.npy', ''))
 
-        # Initialize dataloader for training and validation datasets:
-        self.train_dataset = AdniDataset(self.train_inputs, self.train_outputs, maskcode=self.output_code,
-                                         crop=self.crop, cropshift=self.cropshift, testmode=False)
-        self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
+        # df = image path, mask_path, segmentation indexed by case_id
+        #   Column         Non-Null Count  Dtype
+        # ---  ------         --------------  -----
+        #  0   id             38496 non-null  object
+        #  1   case           38496 non-null  int64
+        #  2   day            38496 non-null  int64
+        #  3   slice          38496 non-null  int64
+        #  4   height         38496 non-null  int64
+        #  5   width          38496 non-null  int64
+        #  6   empty          38496 non-null  bool
+        #  7   image_path_00  38496 non-null  object
+        #  8   image_path_01  38496 non-null  object
+        #  9   image_path_02  38496 non-null  object
+        #  10  image_paths    38496 non-null  object
+        #  11  segmentation   38496 non-null  object
+        #  12  rle_len        38496 non-null  int64
+        #  13  image_path     38496 non-null  object
+        #  14  mask_path      38496 non-null  object
+        df = pd.read_csv('/mnt/d/code_medimg_practice/medical_image_practice/04b_2pt5d/data_04/archive_image/train.csv')
+        df['segmentation'] = df.segmentation.fillna('')
+        df['rle_len'] = df.segmentation.map(len)  # length of each rle mask
 
-        self.valid_dataset = AdniDataset(self.valid_inputs, self.valid_outputs, maskcode=self.output_code,
-                                         crop=self.crop, cropshift=self.cropshift, testmode=False)
-        self.valid_dataloader = DataLoader(self.valid_dataset, batch_size=self.valid_batch_size, shuffle=False)
+        df2 = df.groupby(['id'])['segmentation'].agg(list).to_frame().reset_index()  # rle list of each id
+        df2 = df2.merge(df.groupby(['id'])['rle_len'].agg(sum).to_frame().reset_index())  # total length of all rles of each id
+
+        df = df.drop(columns=['segmentation', 'rle_len'])
+        df = df.groupby(['id']).head(1).reset_index(drop=True)
+        df = df.merge(df2, on=['id'])
+        df['empty'] = (df.rle_len == 0)  # empty masks
+
+        df = df.drop(columns=['image_path', 'mask_path'])
+        df = df.merge(path_df, on=['id'])
+        # df.head()
+        # df.info()
+
+        # remove faulty cases
+        fault1 = 'case7_day0'
+        fault2 = 'case81_day30'
+        df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
+        # df.head()
+        # df.info()
+
+        # create folds
+        skf = StratifiedGroupKFold(n_splits=CFG.n_fold, shuffle=True, random_state=CFG.seed)
+        for fold, (train_idx, val_idx) in enumerate(skf.split(df, df['empty'], groups=df["case"])):
+            df.loc[val_idx, 'fold'] = fold
+        print("---folds---")
+        print(df.groupby(['fold', 'empty'])['id'].count())
+
+        # build Dataset, DataLoader
+        fold = 0
+        debug = True  # zona
+        train_df = df.query("fold!=@fold").reset_index(drop=True)  # zona - get rid of query
+        valid_df = df.query("fold==@fold").reset_index(drop=True)  # zona - get rid of query
+        if debug:
+            train_df = train_df.head(32*5).query("empty==0")
+            valid_df = valid_df.head(32*3).query("empty==0")
+        self.train_dataset = DatasetUWMadison(train_df, transforms=data_transforms['train'])
+        self.valid_dataset = DatasetUWMadison(valid_df, transforms=data_transforms['valid'])
+
+        self.train_dataloader = DataLoader(self.train_dataset, batch_size=CFG.train_batch_size,
+                                           num_workers=4, shuffle=True, pin_memory=True, drop_last=False)
+        self.valid_dataloader = DataLoader(self.valid_dataset, batch_size=CFG.valid_batch_size,
+                                           num_workers=4, shuffle=False, pin_memory=True)
+
+        # test the Dataset / DataLoader...
+        imgs, msks = next(iter(self.train_dataloader))
+        print(f"image.shape {imgs.shape} msks.shape {msks.shape}")
+        print("zona")
 
         # Training epochs:
         self.epoch = 1
@@ -183,7 +313,7 @@ class TrainUNet2D:
 
         # Training miniepochs:
         self.miniepoch = 1
-        self.miniepoch_size_batches = int(np.ceil(self.miniepoch_size_cases / self.train_batch_size))
+        self.miniepoch_size_batches = int(np.ceil(self.miniepoch_size_cases / CFG.train_batch_size))
 
         # Training iterations (batches):
         self.iterations = trange(1, 1 + self.n_epochs * len(self.train_dataloader),
@@ -250,23 +380,23 @@ class TrainUNet2D:
     def train(self):
         print(f'''
             ###########################################################################
-                                >>>   Starting training   <<< 
+                                >>>   Starting training   <<<
             Experiment:                             {self.experiment}
             Segmentation target:                    {self.output_structure}
             Segmentation target code:               {self.output_code}
             Crop shift in (L,A,S) system:           {self.cropshift}
             Cropped image size:                     {self.crop}
             Total training epochs:                  {self.n_epochs}
-            Total miniepochs:                       {len(self.iterations) // self.miniepoch_size_batches}       
+            Total miniepochs:                       {len(self.iterations) // self.miniepoch_size_batches}
             Total iterations:                       {len(self.iterations)}
             Number of training images:              {len(self.train_dataset)}
-            Training batch size:                    {self.train_batch_size}
-            Batches in each epoch:                  {len(self.train_dataloader)} 
+            Training batch size:                    {CFG.train_batch_size}
+            Batches in each epoch:                  {len(self.train_dataloader)}
             Miniepochs in each epoch:               {len(self.train_dataloader) // self.miniepoch_size_batches}
-            Batches in each miniepoch:              {self.miniepoch_size_batches}                      
+            Batches in each miniepoch:              {self.miniepoch_size_batches}
             Images in each miniepoch:               {self.miniepoch_size_cases}
             Number of validation images:            {len(self.valid_dataset)}
-            Validation batch size:                  {self.valid_batch_size}
+            Validation batch size:                  {CFG.valid_batch_size}
             Batches in each validation epoch:       {len(self.valid_dataloader)}
             Validation frequency:                   {self.valid_frequency}
             S3 folder:                              {self.s3_results_folder if self.s3backup is True else None}
@@ -287,7 +417,7 @@ class TrainUNet2D:
                     Co: number of output channels
                     D: depth
                     W: width
-                    H: height                  
+                    H: height
                 '''
                 inputs, targets = data_batch
                 D = inputs.shape[2]
@@ -321,7 +451,7 @@ class TrainUNet2D:
 
                 train_dice = 1 - self.dice_loss(outputs, targets).item()
                 '''
-                Here, loss_value is computed for volumes not slices. 
+                Here, loss_value is computed for volumes not slices.
                 We cannot simply average loss_values over slices because the average should be a weighted average.
                 '''
                 # print('train dice: ', train_dice)
@@ -340,14 +470,14 @@ class TrainUNet2D:
                     # Update records of miniepochs training losses:
                     this_miniepoch_dices = pd.DataFrame(
                         {f'm{self.miniepoch}_e{self.epoch}':
-                             self.train_epoch_dices
-                                 .drop(index='averages', errors='ignore')
-                                 .values
-                                 .flatten(order='F')}
+                         self.train_epoch_dices
+                         .drop(index='averages', errors='ignore')
+                         .values
+                         .flatten(order='F')}
                     ).dropna().iloc[-self.miniepoch_size_batches:].reset_index(drop=True)
 
                     self.train_miniepoch_dices = pd.concat([self.train_miniepoch_dices, this_miniepoch_dices],
-                                                            axis=1)
+                                                           axis=1)
 
                     # Update records of miniepoch learning rates:
                     self.lrs.at[0, f'm{self.miniepoch}_e{self.epoch}'] = self.optimizer.param_groups[0]['lr']
@@ -436,7 +566,7 @@ class TrainUNet2D:
                 B, Ci, D, H, W = inputs.shape
                 '''
                 inputs shape:               [B, Ci, D, W, H]
-                targets = outputs shape:    [B, Co, D, W, H]               
+                targets = outputs shape:    [B, Co, D, W, H]
                 '''
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
@@ -485,7 +615,6 @@ class TrainUNet2D:
             [self.valid_without_target_dices,
              pd.DataFrame({f'm{self.miniepoch}_e{self.epoch}': this_epoch_without_target_dices})],
             axis=1)
-
 
         self.valid_times.append(datetime.now() - t0)
         self.model.train()
@@ -589,14 +718,14 @@ class TrainUNet2D:
                                                 self.valid_dices.shape[1],
                                                 '-----------------------------------------------',
                                                 len(self.train_dataset),
-                                                self.train_batch_size,
+                                                CFG.train_batch_size,
                                                 self.miniepoch_size_batches,
                                                 self.miniepoch_size_cases,
                                                 len(self.train_dataloader) // self.miniepoch_size_batches,
                                                 self.train_transforms,
                                                 '-----------------------------------------------',
                                                 len(self.valid_dataset),
-                                                self.valid_batch_size,
+                                                CFG.valid_batch_size,
                                                 len(self.valid_dataloader),
                                                 self.valid_transforms,
                                                 self.valid_frequency,
@@ -673,11 +802,11 @@ class TrainUNet2D:
         experiment_summary.to_csv(join(self.project_root, self.results_folder,
                                        'experiment_summary.csv'), header=False)
         self.train_epoch_dices.to_csv(join(self.project_root, self.results_folder,
-                                            'train_dices_epochs.csv'))
+                                           'train_dices_epochs.csv'))
         self.train_miniepoch_dices.to_csv(join(self.project_root, self.results_folder,
-                                                'train_dices.csv'))
+                                               'train_dices.csv'))
         self.valid_dices.to_csv(join(self.project_root, self.results_folder,
-                                      'valid_dices.csv'))
+                                     'valid_dices.csv'))
         self.best_valid_dices.to_csv(join(self.project_root, self.results_folder,
                                           'best_valid_dices.csv'))
         self.best_valid_with_target_dices.to_csv(join(self.project_root, self.results_folder,
@@ -724,7 +853,7 @@ class TrainUNet2D:
 
         # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-    def save_niftis(self):
+    def save_niftis(self, df):
         """
         This method loads the best model, runs the validation inputs through the best model to get predictions,
         and computes loss values for each scan in the validation set.
@@ -733,10 +862,10 @@ class TrainUNet2D:
         """
         print('\n >>>   Saving NIfTi files   <<< \n')
 
-        # Load validation inputs/outputs together with their affine transforms and their paths (testmode=True):
-        valid_dataset = AdniDataset(self.valid_inputs, self.valid_outputs, maskcode=self.output_code,
-                                    crop=self.crop, cropshift=self.cropshift, testmode=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=self.valid_batch_size, shuffle=False)
+        valid_dataset = DatasetUWMadison(df.query("fold==0 & empty==0").sample(frac=1.0), label=False,
+                                         transforms=data_transforms['valid'])
+        valid_dataloader = DataLoader(valid_dataset, batch_size=5,
+                                      num_workers=4, shuffle=False, pin_memory=True)
 
         # Dataframe for individual scans dices:
         scans_dices = pd.DataFrame(columns=['subject', 'scan', 'dice'])
@@ -803,7 +932,7 @@ class TrainUNet2D:
         copyfile(join(self.project_root, self.results_folder, 'experiment_summary.csv'),
                  join(self.project_root, self.results_folder, self.niftis_folder, 'experiment_summary.csv'))
 
-        print(f">>>   Saved predictions and targets as NifTi files   <<<")
+        print(">>>   Saved predictions and targets as NifTi files   <<<")
 
         # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
