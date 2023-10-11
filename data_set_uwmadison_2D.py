@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 
-class DatasetUWMadison(torch.utils.data.Dataset):
+class DatasetUWMadison2D(torch.utils.data.Dataset):
     def __init__(self, df, label=True, transforms=None):
         self.df = df
         self.label = label
