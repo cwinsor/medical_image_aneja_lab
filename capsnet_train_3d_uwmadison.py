@@ -12,6 +12,7 @@
 from data_loader import AdniDataset, make_image_list
 from capsnet_model_3d import CapsNet3D
 from loss_functions import DiceLoss, DiceBCELoss
+import cv2
 
 # System imports:
 
@@ -31,7 +32,7 @@ from dipy.io.image import save_nifti
 
 from data_set_uwmadison_3D import DatasetUWMadison3D
 from sklearn.model_selection import StratifiedGroupKFold
-import albumentations as A
+import albumentations as Album
 from glob import glob
 import random
 
@@ -43,9 +44,10 @@ class CFG:
     # comment       = 'unet-efficientnet_b0-160x192-ep=5'
     # model_name    = 'Unet'
     # backbone      = 'efficientnet-b0'
-    train_batch_size = 4
-    valid_batch_size = 4
-    # img_size = [160, 192]
+    train_batch_size = 15
+    valid_batch_size = 15
+    # img_size = [64, 64]  # [160, 192]
+
     # epochs        = 5
     # lr            = 2e-3
     # scheduler     = 'CosineAnnealingLR'
@@ -59,6 +61,10 @@ class CFG:
     # folds         = [0]
     # num_classes   = 3
     # device        = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    # Backup S3 destination, if not None:
+    # s3_results_folder = 's3://aneja-lab-capsnet/data/results/temp'
+    s3_results_folder = None
 
 
 # reproducibility
@@ -80,22 +86,22 @@ def set_seed(seed=42):
 set_seed(CFG.seed)
 
 data_transforms = {
-    "train": A.Compose([
-        # # A.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
-        # A.HorizontalFlip(p=0.5),
-        # # A.VerticalFlip(p=0.5),
-        # A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.05, rotate_limit=10, p=0.5),
-        # A.OneOf([
-        #     A.GridDistortion(num_steps=5, distort_limit=0.05, p=1.0),
-        #     # A.OpticalDistortion(distort_limit=0.05, shift_limit=0.05, p=1.0),
-        #     A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=1.0)
+    "train": Album.Compose([
+        # Album.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
+        # Album.HorizontalFlip(p=0.5),
+        # # Album.VerticalFlip(p=0.5),
+        # Album.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.05, rotate_limit=10, p=0.5),
+        # Album.OneOf([
+        #     Album.GridDistortion(num_steps=5, distort_limit=0.05, p=1.0),
+        #     # Album.OpticalDistortion(distort_limit=0.05, shift_limit=0.05, p=1.0),
+        #     Album.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=1.0)
         # ], p=0.25),
-        # A.CoarseDropout(max_holes=8, max_height=CFG.img_size[0]//20, max_width=CFG.img_size[1]//20,
+        # Album.CoarseDropout(max_holes=8, max_height=CFG.img_size[0]//20, max_width=CFG.img_size[1]//20,
         #                 min_holes=5, fill_value=0, mask_fill_value=0, p=0.5),
         ], p=1.0),
 
-    "valid": A.Compose([
-        # A.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
+    "valid": Album.Compose([
+        # Album.Resize(*CFG.img_size, interpolation=cv2.INTER_NEAREST),
         ], p=1.0)
 }
 
@@ -201,11 +207,6 @@ class TrainCapsNet3D:
         # # (cropped inputs, predictions, and ground-truth images)
         # self.niftis_folder = 'niftis'
 
-        # # Determine if backup to S3 should be done:
-        # self.s3backup = True
-        # # S3 bucket backup folder for results:
-        # self.s3_results_folder = 's3://aneja-lab-capsnet/data/results/temp'
-
         # .......................................................................................................
         ###################################
         #   DON'T CHANGE THESE, PLEASE!   #
@@ -250,7 +251,6 @@ class TrainCapsNet3D:
 
         # build Dataset, DataLoader
         fold = 0
-        debug = True  # zona
         train_df = df.query("fold!=@fold").reset_index(drop=True)  # zona - get rid of query
         valid_df = df.query("fold==@fold").reset_index(drop=True)  # zona - get rid of query
         # if debug:
@@ -265,18 +265,7 @@ class TrainCapsNet3D:
                                            num_workers=4, shuffle=False, pin_memory=True)
 
         # test the Dataset / DataLoader...
-        imgs, msks = next(iter(self.train_dataloader))
-        print(f"image.shape {imgs.shape} msks.shape {msks.shape}")
-        print("zona")
-
-        # Initialize dataloader for training and validation datasets:
-        # self.train_dataset = AdniDataset(self.train_inputs, self.train_outputs, maskcode=self.output_code,
-        #                                  crop=self.crop, cropshift=self.cropshift, testmode=False)
-        # self.train_dataloader = DataLoader(self.train_dataset, batch_size=CFG.train_batch_size, shuffle=True)
-
-        # self.valid_dataset = AdniDataset(self.valid_inputs, self.valid_outputs, maskcode=self.output_code,
-        #                                  crop=self.crop, cropshift=self.cropshift, testmode=False)
-        # self.valid_dataloader = DataLoader(self.valid_dataset, batch_size=CFG.valid_batch_size, shuffle=False)
+        # imgs, msks = next(iter(self.train_dataloader))
 
         # Training epochs:
         self.epoch = 1
@@ -327,11 +316,10 @@ class TrainCapsNet3D:
 
         # At the end, save validation inputs, outputs and predictions as NifTi files
         # together with each scan's loss value.
-        self.save_niftis()
+        # self.save_niftis()  # zona
 
         # Finally, backup the results to S3:
-        if self.s3backup:
-            self.backup_to_s3()
+        self.backup_to_s3()
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -357,7 +345,7 @@ class TrainCapsNet3D:
         Batches in each validation epoch:       {len(self.valid_dataloader)}
         Validation frequency:                   {self.valid_frequency}
 
-        S3 folder:                              {self.s3_results_folder}
+        S3 folder:                              {CFG.s3_results_folder}
         ###########################################################################
         ''')
         self.model = self.model.to(self.device)
@@ -365,11 +353,20 @@ class TrainCapsNet3D:
 
         for self.epoch in self.epochs:
 
-            for i, data_batch in enumerate(self.train_dataloader):
+            for i, data_batch_cpu in enumerate(self.train_dataloader):
                 t0 = datetime.now()
 
-                inputs, targets = data_batch
-                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                inputs_cpu, targets_cpu = data_batch_cpu
+
+                inputs_cpu = torch.unsqueeze(inputs_cpu, 0)
+                inputs_cpu = torch.permute(inputs_cpu, (1, 0, 2, 3, 4))
+                inputs_cpu_clone = torch.clone(inputs_cpu)
+                inputs = inputs_cpu_clone.to(self.device, dtype=torch.float32)
+
+                targets_cpu = torch.unsqueeze(targets_cpu, 0)
+                targets_cpu = torch.permute(targets_cpu, (1, 0, 2, 3, 4))
+                targets_cpu_clone = torch.clone(targets_cpu)
+                targets = targets_cpu_clone.to(self.device, dtype=torch.float32)
 
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
@@ -424,10 +421,9 @@ class TrainCapsNet3D:
 
                     # Save stats and plots:
                     self.save_stats()
-                    self.save_plots()
+                    # self.save_plots()  # zona
                     # Back up results to S3:
-                    if self.s3backup:
-                        self.backup_to_s3()
+                    self.backup_to_s3()
                     # Update miniepoch counter:
                     self.miniepoch += 1
 
@@ -459,9 +455,22 @@ class TrainCapsNet3D:
 
         this_epoch_losses = []
 
-        for i, data_batch in enumerate(self.valid_dataloader):
-            inputs, targets = data_batch
-            inputs, targets = inputs.to(self.device), targets.to(self.device)
+        for i, data_batch_cpu in enumerate(self.valid_dataloader):
+            # inputs, targets = data_batch
+            # inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            inputs_cpu, targets_cpu = data_batch_cpu
+
+            inputs_cpu = torch.unsqueeze(inputs_cpu, 0)
+            inputs_cpu = torch.permute(inputs_cpu, (1, 0, 2, 3, 4))
+            inputs_cpu_clone = torch.clone(inputs_cpu)
+            inputs = inputs_cpu_clone.to(self.device, dtype=torch.float32)
+
+            targets_cpu = torch.unsqueeze(targets_cpu, 0)
+            targets_cpu = torch.permute(targets_cpu, (1, 0, 2, 3, 4))
+            targets_cpu_clone = torch.clone(targets_cpu)
+            targets = targets_cpu_clone.to(self.device, dtype=torch.float32)
+
             with torch.no_grad():
                 outputs = self.model(inputs)
                 losses = self.criterion_individual_losses(outputs, targets)
@@ -545,11 +554,11 @@ class TrainCapsNet3D:
                                               'optimizer',
                                               'model',
                                               '-----------------------------------------------',
-                                              'S3 address',
-                                              'training inputs',
-                                              'training outputs',
-                                              'validation inputs',
-                                              'validation outputs'],
+                                              'S3 address'],
+                                            #   'training inputs',
+                                            #   'training outputs',
+                                            #   'validation inputs',
+                                            #   'validation outputs'],
 
                                        data=[datetime.now().strftime('%m/%d/%Y %H:%M:%S'),
                                              self.output_structure,
@@ -605,11 +614,11 @@ class TrainCapsNet3D:
                                              self.optimizer,
                                              self.model,
                                              '-----------------------------------------------',
-                                             self.s3_results_folder,
-                                             self.train_inputs,
-                                             self.train_outputs,
-                                             self.valid_inputs,
-                                             self.valid_outputs])
+                                             CFG.s3_results_folder])
+                                            #  self.train_inputs,
+                                            #  self.train_outputs,
+                                            #  self.valid_inputs,
+                                            #  self.valid_outputs])
 
         # Remove previous summary stats:
         self.train_epoch_losses.drop(index='averages', errors='ignore', inplace=True)
@@ -618,10 +627,10 @@ class TrainCapsNet3D:
         self.train_times.drop(index='totals', errors='ignore', inplace=True)
 
         # Add latest summary stats:
-        self.train_epoch_losses.at['averages', :] = self.train_epoch_losses.mean()
-        self.train_miniepoch_losses.at['averages', :] = self.train_miniepoch_losses.mean()
-        self.valid_losses.at['averages', :] = self.valid_losses.mean()
-        self.train_times.at['totals', :] = self.train_times.sum()
+        # self.train_epoch_losses.at['averages', :] = self.train_epoch_losses.mean()
+        # self.train_miniepoch_losses.at['averages', :] = self.train_miniepoch_losses.mean()
+        # self.valid_losses.at['averages', :] = self.valid_losses.mean()
+        # self.train_times.at['totals', :] = self.train_times.sum()
 
         # Sort data rows so that the summary stats will be the last row:
         # self.train_epoch_losses.sort_index(key=lambda xs: [str(x) for x in xs], inplace=True)
@@ -785,11 +794,14 @@ class TrainCapsNet3D:
         """
         ec2_results_folder = join(self.project_root, self.results_folder)
 
-        command = f'aws s3 sync {ec2_results_folder} {self.s3_results_folder}' if verbose \
-            else f'aws s3 sync {ec2_results_folder} {self.s3_results_folder} >/dev/null &'
+        command = f'aws s3 sync {ec2_results_folder} {CFG.s3_results_folder}' if verbose \
+            else f'aws s3 sync {ec2_results_folder} {CFG.s3_results_folder} >/dev/null &'
 
-        os.system(command)
-        print(f'>>>   S3 backup done at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
+        if CFG.s3_results_folder:
+            os.system(command)
+            print(f'>>>   S3 backup done at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
+        else:
+            print(f'>>>   NO BACKUP TO S3 at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
 
 
 # ------------------------------------------ Run TrainUNet3D Instance ------------------------------------------
