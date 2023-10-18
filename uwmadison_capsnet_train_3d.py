@@ -64,6 +64,7 @@ class CFG:
 
     # Backup S3 destination, if not None:
     # s3_results_folder = 's3://aneja-lab-capsnet/data/results/temp'
+    ec2_results_folder = "results" + datetime.now().strftime("%y%m%d_%H%M%S")
     s3_results_folder = None
 
 
@@ -192,8 +193,6 @@ class TrainCapsNet3D:
         self.project_root = '/mnt/d/code_medimg_aneja_lab'
         # Folder that contains datasets csv files:
         self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d'
-        # Folder to save model results:
-        self.results_folder = 'results_231010'
 
         # # csv file containing list of inputs for training:
         # self.train_inputs_csv = 'train_inputs.csv'
@@ -353,20 +352,18 @@ class TrainCapsNet3D:
 
         for self.epoch in self.epochs:
 
-            for i, data_batch_cpu in enumerate(self.train_dataloader):
+            for i, data_batch in enumerate(self.train_dataloader):
                 t0 = datetime.now()
 
-                inputs_cpu, targets_cpu = data_batch_cpu
+                inputs_cpu, targets_cpu = data_batch
 
                 inputs_cpu = torch.unsqueeze(inputs_cpu, 0)
                 inputs_cpu = torch.permute(inputs_cpu, (1, 0, 2, 3, 4))
-                inputs_cpu_clone = torch.clone(inputs_cpu)
-                inputs = inputs_cpu_clone.to(self.device, dtype=torch.float32)
+                inputs = inputs_cpu.to(self.device, dtype=torch.float32)
 
                 targets_cpu = torch.unsqueeze(targets_cpu, 0)
                 targets_cpu = torch.permute(targets_cpu, (1, 0, 2, 3, 4))
-                targets_cpu_clone = torch.clone(targets_cpu)
-                targets = targets_cpu_clone.to(self.device, dtype=torch.float32)
+                targets = targets_cpu.to(self.device, dtype=torch.float32)
 
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
@@ -639,19 +636,19 @@ class TrainCapsNet3D:
         # self.train_times.sort_index(key=lambda xs: [str(x) for x in xs], inplace=True)
 
         # Save stats:
-        os.makedirs(join(self.project_root, self.results_folder), exist_ok=True)
+        os.makedirs(join(self.project_root, CFG.ec2_results_folder), exist_ok=True)
 
-        hyperparameters.to_csv(join(self.project_root, self.results_folder,
+        hyperparameters.to_csv(join(self.project_root, CFG.ec2_results_folder,
                                     'hyperparameters.csv'), header=False)
-        self.train_epoch_losses.to_csv(join(self.project_root, self.results_folder,
+        self.train_epoch_losses.to_csv(join(self.project_root, CFG.ec2_results_folder,
                                             'training_losses_epochs.csv'))
-        self.train_miniepoch_losses.to_csv(join(self.project_root, self.results_folder,
+        self.train_miniepoch_losses.to_csv(join(self.project_root, CFG.ec2_results_folder,
                                                 'training_losses.csv'))
-        self.valid_losses.to_csv(join(self.project_root, self.results_folder,
+        self.valid_losses.to_csv(join(self.project_root, CFG.ec2_results_folder,
                                       'validation_losses.csv'))
-        self.train_times.to_csv(join(self.project_root, self.results_folder,
+        self.train_times.to_csv(join(self.project_root, CFG.ec2_results_folder,
                                      'training_times.csv'))
-        self.lrs.to_csv(join(self.project_root, self.results_folder,
+        self.lrs.to_csv(join(self.project_root, CFG.ec2_results_folder,
                              'learning_rates.csv'), index=False)
         print(f'>>>   Saved stats at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
 
@@ -661,7 +658,7 @@ class TrainCapsNet3D:
         """
         Plots training losses, validation losses, and learning rates
         """
-        os.makedirs(join(self.project_root, self.results_folder), exist_ok=True)
+        os.makedirs(join(self.project_root, CFG.ec2_results_folder), exist_ok=True)
 
         train_losses = self.train_miniepoch_losses.loc['averages', :]
         valid_losses = self.valid_losses.loc['averages', :]
@@ -673,7 +670,7 @@ class TrainCapsNet3D:
         plt.xlabel(f'miniepochs ({self.epoch} epochs)')
         plt.ylabel('Loss')
         plt.legend()
-        plt.savefig(join(self.project_root, self.results_folder, 'losses.png'))
+        plt.savefig(join(self.project_root, CFG.ec2_results_folder, 'losses.png'))
         plt.clf()
 
         # Plot learning rates:
@@ -681,7 +678,7 @@ class TrainCapsNet3D:
         plt.xlabel(f'miniepochs ({self.epoch} epochs)')
         plt.ylabel('Learning rate')
         plt.legend()
-        plt.savefig(join(self.project_root, self.results_folder, 'learning_rates.png'))
+        plt.savefig(join(self.project_root, CFG.ec2_results_folder, 'learning_rates.png'))
         plt.clf()
 
         print(f'>>>   Saved plots at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
@@ -703,7 +700,7 @@ class TrainCapsNet3D:
         valid_dataloader = DataLoader(valid_dataset, batch_size=CFG.valid_batch_size, shuffle=False)
 
         # Load best model:
-        self.load_model(join(self.project_root, self.results_folder, 'saved_model.pth.tar'))
+        self.load_model(join(self.project_root, CFG.ec2_results_folder, 'saved_model.pth.tar'))
         self.model.eval()
 
         # Dataframe for individual scans losses:
@@ -746,7 +743,7 @@ class TrainCapsNet3D:
                 '''
                 path_components = path.split('/')
                 subject, scan = path_components[-3], path_components[-2]
-                folder = join(self.project_root, self.results_folder, self.niftis_folder, subject, scan)
+                folder = join(self.project_root, CFG.ec2_results_folder, self.niftis_folder, subject, scan)
                 os.makedirs(folder, exist_ok=True)
 
                 save_nifti(join(folder, 'output.nii.gz'), output_nc, affine)
@@ -760,18 +757,18 @@ class TrainCapsNet3D:
 
         # .........................................................................................................
         # Write results as csv files in the NifTi images folder:
-        scan_losses.to_csv(join(self.project_root, self.results_folder, self.niftis_folder,
+        scan_losses.to_csv(join(self.project_root, CFG.ec2_results_folder, self.niftis_folder,
                                 'scans_losses.csv'), index=False)
-        copyfile(join(self.project_root, self.results_folder, 'hyperparameters.csv'),
-                 join(self.project_root, self.results_folder, self.niftis_folder, 'hyperparameters.csv'))
+        copyfile(join(self.project_root, CFG.ec2_results_folder, 'hyperparameters.csv'),
+                 join(self.project_root, CFG.ec2_results_folder, self.niftis_folder, 'hyperparameters.csv'))
 
         print(">>>   Saved predictions and targets as NifTi files   <<<")
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def save_model(self):
-        os.makedirs(join(self.project_root, self.results_folder), exist_ok=True)
-        complete_path = join(self.project_root, self.results_folder, 'saved_model.pth.tar')
+        os.makedirs(join(self.project_root, CFG.ec2_results_folder), exist_ok=True)
+        complete_path = join(self.project_root, CFG.ec2_results_folder, 'saved_model.pth.tar')
         checkpoint = {'state_dict': self.model.state_dict()}
         # checkpoint = {'state_dict': self.model.state_dict(), 'optimizer': self.optimizer.state_dict()}
         torch.save(checkpoint, complete_path)
@@ -792,7 +789,7 @@ class TrainCapsNet3D:
         This method backs up the results to S3 bucket.
         It runs in the background and doesn't slow down training.
         """
-        ec2_results_folder = join(self.project_root, self.results_folder)
+        ec2_results_folder = join(self.project_root, CFG.ec2_results_folder)
 
         command = f'aws s3 sync {ec2_results_folder} {CFG.s3_results_folder}' if verbose \
             else f'aws s3 sync {ec2_results_folder} {CFG.s3_results_folder} >/dev/null &'
