@@ -15,7 +15,11 @@ class DatasetUWMadison3D(torch.utils.data.Dataset):
     def __getitem__(self, index):
         image_raw = np.load(self.df.loc[index].image_path, encoding='bytes')
         mask_raw = np.load(self.df.loc[index].mask_path, encoding='bytes')
+        id = self.df.loc[index, 'id']
+        case = self.df.loc[index, 'case']
+        day = self.df.loc[index, 'day']
 
+        id_case_day = list(self.df.loc[index, ['id','case','day']])
         # ZONA - we spend a lot of code to reshape the 3D voxel into a fixed-size target
         # using crop and padding...
         # BUT what we really need to do is use the scale factors provided in the dataset (image name)
@@ -58,4 +62,4 @@ class DatasetUWMadison3D(torch.utils.data.Dataset):
         mask[tar_start_h:tar_end_h+1, tar_start_w:tar_end_w+1, tar_start_d:tar_end_d+1] = (
             mask_raw[src_start_h:src_end_h+1, src_start_w:src_end_w+1, src_start_d:src_end_d+1])
 
-        return (image, mask)
+        return (image, mask, id, case, day)

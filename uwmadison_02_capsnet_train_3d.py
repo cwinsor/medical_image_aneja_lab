@@ -64,7 +64,7 @@ class CFG:
 
     # Backup S3 destination, if not None:
     # s3_results_folder = 's3://aneja-lab-capsnet/data/results/temp'
-    ec2_results_folder = "results" + datetime.now().strftime("%y%m%d_%H%M%S")
+    ec2_results_folder = "train_results_" + datetime.now().strftime("%y%m%d_%H%M%S")
     s3_results_folder = None
 
 
@@ -233,9 +233,9 @@ class TrainCapsNet3D:
         df['case'] = df.id.map(lambda x: x.split('_')[1])
         df['day'] = df.id.map(lambda x: x.split('_')[3])
 
-        # remove faulty cases
-        fault1 = 'case_7_day_0'
-        fault2 = 'case_81_day_30'
+        # remove faulty cases  # ZONA - this should be in the preprocessing step !!!
+        fault1 = 'case_7_day_0'  # zona
+        fault2 = 'case_81_day_30'  # zona
         df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
         # df.head()
         print(df.info())
