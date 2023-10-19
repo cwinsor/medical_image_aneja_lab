@@ -228,10 +228,10 @@ class TestCapsNet3D:
                 outputs = self.model(inputs)
                 batch_losses = self.criterion(outputs, targets)
 
-            outputs = outputs.cpu().detach().numpy()
+                outputs = outputs.cpu().detach().numpy()
 
-            for output, id in zip(outputs, ids):
-                np.save(f"{folder_name}/_{id}.npy", output)
+                for output, id in zip(outputs, ids):
+                    np.save(f"{folder_name}/{id}.npy", output[0,:])
         
         print(f"wrote mask predictions to {folder_name}")
 
