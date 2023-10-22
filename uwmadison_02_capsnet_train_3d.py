@@ -9,7 +9,7 @@
 
 # Project imports:
 
-from data_loader import AdniDataset, make_image_list
+# from data_loader import AdniDataset, make_image_list
 from capsnet_model_3d import CapsNet3D
 from loss_functions import DiceLoss, DiceBCELoss
 import cv2
@@ -44,8 +44,8 @@ class CFG:
     # comment       = 'unet-efficientnet_b0-160x192-ep=5'
     # model_name    = 'Unet'
     # backbone      = 'efficientnet-b0'
-    train_batch_size = 15
-    valid_batch_size = 15
+    train_batch_size = 5
+    valid_batch_size = 5
     # img_size = [64, 64]  # [160, 192]
 
     # epochs        = 5
@@ -124,18 +124,6 @@ class TrainCapsNet3D:
         # to find the code, open any aparc+aseg.mgz in FreeView and change color coding to lookup table
         self.output_code = 53
 
-        # Set the size of the cropped volume:
-        # if this is set to 100, the center of the volumed is cropped with the size of 100 x 100 x 100.
-        # if this is set to (100, 64, 64), the center of the volume is cropped with size of (100 x 64 x 64).
-        # note that 100, 64 and 64 here respectively represent left-right, posterior-anterior,
-        # and inferior-superior dimensions, i.e. standard radiology coordinate system ('L','A','S').
-        self.crop = (64, 64, 64)
-        # Set cropshift:
-        # if the target structure is right hippocampus, the crop box may be shifted to right by 20 pixels,
-        # anterior by 5 pixels, and inferior by 20 pixels --> cropshift = (-20, 5, -20);
-        # note that crop and cropshift here are set here using standard radiology system ('L','A','S'):
-        self.cropshift = (-20, 0, -20)
-
         # Set model:
         self.model = CapsNet3D()
         # Set initial learning rate:
@@ -192,7 +180,12 @@ class TrainCapsNet3D:
         # Set project root path:
         self.project_root = '/mnt/d/code_medimg_aneja_lab'
         # Folder that contains datasets csv files:
-        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d'
+        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_100140_20_30_144'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_123509_310_360_144'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_142819_155_180_144'
+
+
 
         # # csv file containing list of inputs for training:
         # self.train_inputs_csv = 'train_inputs.csv'
@@ -233,13 +226,13 @@ class TrainCapsNet3D:
         df['case'] = df.id.map(lambda x: x.split('_')[1])
         df['day'] = df.id.map(lambda x: x.split('_')[3])
 
-        # remove faulty cases  # ZONA - this should be in the preprocessing step !!!
-        fault1 = 'case_7_day_0'  # zona
-        fault2 = 'case_81_day_30'  # zona
-        df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
-        # df.head()
-        print(df.info())
-        # print(df[('id', 'case', 'day')].describe())
+        # # remove faulty cases  # ZONA - this should be in the preprocessing step... but I can't find anything wrong !!!
+        # fault1 = 'case_7_day_0'  # zona
+        # fault2 = 'case_81_day_30'  # zona
+        # df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
+        # # df.head()
+        # print(df.info())
+        # # print(df[('id', 'case', 'day')].describe())
 
         # create folds
         skf = StratifiedGroupKFold(n_splits=CFG.n_fold, shuffle=True, random_state=CFG.seed)
@@ -313,10 +306,6 @@ class TrainCapsNet3D:
         # Run trainer:
         self.train()
 
-        # At the end, save validation inputs, outputs and predictions as NifTi files
-        # together with each scan's loss value.
-        # self.save_niftis()  # zona
-
         # Finally, backup the results to S3:
         self.backup_to_s3()
 
@@ -328,8 +317,6 @@ class TrainCapsNet3D:
                             >>>   Starting training   <<<
         Segmentation target:                    {self.output_structure}
         Segmentation target code:               {self.output_code}
-        Cropped image size:                     {self.crop}
-        Crop shift in (L,A,S) system:           {self.cropshift}
         Total training epochs:                  {self.n_epochs}
         Total miniepochs:                       {len(self.iterations) // self.miniepoch_size_batches}
         Total iterations:                       {len(self.iterations)}
@@ -344,13 +331,18 @@ class TrainCapsNet3D:
         Batches in each validation epoch:       {len(self.valid_dataloader)}
         Validation frequency:                   {self.valid_frequency}
 
-        S3 folder:                              {CFG.s3_results_folder}
+        ec2_results_folder:                     {CFG.ec2_results_folder}
+        s3_results_folder:                      {CFG.s3_results_folder}
         ###########################################################################
         ''')
         self.model = self.model.to(self.device)
         self.model.train()
 
+        print(f'self.epochs {self.epochs}')
+
         for self.epoch in self.epochs:
+
+            print(f'----- epoch {self.epoch}')
 
             for i, data_batch in enumerate(self.train_dataloader):
                 t0 = datetime.now()
@@ -500,8 +492,6 @@ class TrainCapsNet3D:
         hyperparameters = pd.DataFrame(index=['date and time',
                                               'segmentation target',
                                               'freesurfer code for segmentation target',
-                                              'image crop size',
-                                              'crop shift in (L,A,S) system',
                                               '-----------------------------------------------',
                                               'training epochs',
                                               'training miniepochs',
@@ -560,8 +550,6 @@ class TrainCapsNet3D:
                                        data=[datetime.now().strftime('%m/%d/%Y %H:%M:%S'),
                                              self.output_structure,
                                              self.output_code,
-                                             self.crop,
-                                             self.cropshift,
                                              '-----------------------------------------------',
                                              self.epoch,
                                              self.miniepoch,
@@ -684,85 +672,6 @@ class TrainCapsNet3D:
         print(f'>>>   Saved plots at epoch {self.epoch}, miniepoch {self.miniepoch}   <<<')
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-    def save_niftis(self):
-        """
-        This method loads the best model, runs the validation inputs through the best model to get predictions,
-        and computes loss values for each scan in the validation set.
-        Finally, it saves outputs (= predictions) and targets (= ground truths) as NifTi files,
-        together with the loss value for each scan.
-        """
-        print('>>>   Saving NifTi files   <<<')
-
-        # Load validation inputs/outputs together with their affine transforms and their paths (testmode=True):
-        valid_dataset = AdniDataset(self.valid_inputs, self.valid_outputs, maskcode=self.output_code,
-                                    crop=self.crop, cropshift=self.cropshift, testmode=True)
-        valid_dataloader = DataLoader(valid_dataset, batch_size=CFG.valid_batch_size, shuffle=False)
-
-        # Load best model:
-        self.load_model(join(self.project_root, CFG.ec2_results_folder, 'saved_model.pth.tar'))
-        self.model.eval()
-
-        # Dataframe for individual scans losses:
-        scan_losses = pd.DataFrame(columns=['subject', 'scan', 'loss type', 'loss'])
-
-        # .....................................................................................................
-
-        for data_batch in tqdm(valid_dataloader, desc='Saving NifTi files'):
-
-            inputs, targets, shapes, crops_coords, affines, paths = data_batch
-            inputs, targets = inputs.to(self.device), targets.to(self.device)
-            with torch.no_grad():
-                outputs = self.model(inputs)
-                batch_losses = self.criterion_individual_losses(outputs, targets)
-
-            # .....................................................................................................
-
-            for i in range(len(paths)):
-                output = outputs[i, 0, ...].cpu().numpy()
-                target = targets[i, 0, ...].cpu().numpy().astype('uint8')
-                loss = batch_losses[i].cpu().numpy()
-                shape = shapes[i, ...].numpy()
-                cc = crops_coords[i, ...].numpy()  # cc: crop coordinates
-                affine = affines[i, ...].numpy()
-                path = paths[i]
-                # .................................................................................................
-                output_nc = np.zeros(shape)  # nc: non-cropped
-                output_nc[cc[0, 0]: cc[0, 1], cc[1, 0]: cc[1, 1], cc[2, 0]: cc[2, 1]] = output
-
-                target[0, :, :] = target[-1, :, :] = \
-                    target[:, 0, :] = target[:, -1, :] = \
-                    target[:, :, 0] = target[:, :, -1] = 1  # mark edges of the crop box
-
-                target_nc = np.zeros(shape)
-                target_nc[cc[0, 0]: cc[0, 1], cc[1, 0]: cc[1, 1], cc[2, 0]: cc[2, 1]] = target
-                # .................................................................................................
-                '''
-                Example of a path:
-                /home/arman_avesta/capsnet/data/images/033_S_0725/2008-08-06_13_54_42.0/aparc+aseg_brainbox.mgz
-                '''
-                path_components = path.split('/')
-                subject, scan = path_components[-3], path_components[-2]
-                folder = join(self.project_root, CFG.ec2_results_folder, self.niftis_folder, subject, scan)
-                os.makedirs(folder, exist_ok=True)
-
-                save_nifti(join(folder, 'output.nii.gz'), output_nc, affine)
-                save_nifti(join(folder, 'target.nii.gz'), target_nc, affine)
-                # .................................................................................................
-                scan_loss = pd.DataFrame({'subject': subject, 'scan': scan,
-                                          'loss type': self.criterion, 'loss': [loss]})
-                scan_loss.to_csv(join(folder, 'loss.csv'), index=False)
-
-                scan_losses = pd.concat([scan_losses, scan_loss])
-
-        # .........................................................................................................
-        # Write results as csv files in the NifTi images folder:
-        scan_losses.to_csv(join(self.project_root, CFG.ec2_results_folder, self.niftis_folder,
-                                'scans_losses.csv'), index=False)
-        copyfile(join(self.project_root, CFG.ec2_results_folder, 'hyperparameters.csv'),
-                 join(self.project_root, CFG.ec2_results_folder, self.niftis_folder, 'hyperparameters.csv'))
-
-        print(">>>   Saved predictions and targets as NifTi files   <<<")
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 

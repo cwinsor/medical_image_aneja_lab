@@ -30,36 +30,5 @@ class DatasetUWMadison3D(torch.utils.data.Dataset):
         if image_raw.shape != mask_raw.shape:
             assert False, "whoh - image and mask shapes not the same !!!"
 
-        sh, sw, sd = image_raw.shape
-        th, tw, td = 40, 40, 40
-
-        def pad_and_crop_idx(source_size, target_size):
-            if source_size < target_size:  # pick the smaller
-                the_size = source_size
-            else:
-                the_size = target_size
-
-            half_size = the_size // 2
-            source_mid_idx = source_size // 2
-            target_mid_idx = target_size // 2
-
-            source_start_idx = source_mid_idx - half_size
-            source_end_idx = source_start_idx + the_size - 1
-            target_start_idx = target_mid_idx - half_size
-            target_end_idx = target_start_idx + the_size - 1
-
-            return source_start_idx, source_end_idx, target_start_idx, target_end_idx
-
-        src_start_h, src_end_h, tar_start_h, tar_end_h = pad_and_crop_idx(sh, th)
-        src_start_w, src_end_w, tar_start_w, tar_end_w = pad_and_crop_idx(sw, tw)
-        src_start_d, src_end_d, tar_start_d, tar_end_d = pad_and_crop_idx(sd, td)
-
-        image = np.zeros((th, tw, td))
-        image[tar_start_h:tar_end_h+1, tar_start_w:tar_end_w+1, tar_start_d:tar_end_d+1] = (
-            image_raw[src_start_h:src_end_h+1, src_start_w:src_end_w+1, src_start_d:src_end_d+1])
-
-        mask = np.zeros((th, tw, td))
-        mask[tar_start_h:tar_end_h+1, tar_start_w:tar_end_w+1, tar_start_d:tar_end_d+1] = (
-            mask_raw[src_start_h:src_end_h+1, src_start_w:src_end_w+1, src_start_d:src_end_d+1])
-
-        return (image, mask, id, case, day)
+        # return (image_raw, mask_raw, id, case, day)
+        return (image_raw, mask_raw)
