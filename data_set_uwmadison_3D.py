@@ -31,4 +31,4 @@ class DatasetUWMadison3D(torch.utils.data.Dataset):
             assert False, "whoh - image and mask shapes not the same !!!"
 
         # return (image_raw, mask_raw, id, case, day)
-        return (image_raw, mask_raw)
+        return image_raw, mask_raw, case, day

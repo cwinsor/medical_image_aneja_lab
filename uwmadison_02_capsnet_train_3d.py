@@ -44,8 +44,8 @@ class CFG:
     # comment       = 'unet-efficientnet_b0-160x192-ep=5'
     # model_name    = 'Unet'
     # backbone      = 'efficientnet-b0'
-    train_batch_size = 5
-    valid_batch_size = 5
+    train_batch_size = 2
+    valid_batch_size = 2
     # img_size = [64, 64]  # [160, 192]
 
     # epochs        = 5
@@ -181,9 +181,14 @@ class TrainCapsNet3D:
         self.project_root = '/mnt/d/code_medimg_aneja_lab'
         # Folder that contains datasets csv files:
         # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d'
-        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_100140_20_30_144'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_100140_20_30_144'
         # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_123509_310_360_144'
         # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_142819_155_180_144'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_173746_40_60_36'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_182137_78_90_36'
+        # self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_184413_155_180_72'
+        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_185253_103_120_48'
+
 
 
 

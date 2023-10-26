@@ -41,7 +41,7 @@ class CFG:
     # backbone      = 'efficientnet-b0'
     # train_batch_size = 15
     # valid_batch_size = 15
-    test_batch_size = 2
+    test_batch_size = 3
     # img_size = [64, 64]  # [160, 192]
 
     # epochs        = 5
@@ -107,12 +107,13 @@ class TestCapsNet3D:
         # Project root:
         # CFG.project_root = '/mnt/d/code_medimg_aneja_lab'
 
+        # Testing dataset paths:
+        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d_masked_and_padded_231022_185253_103_120_48'  # ZONA - a) the preprocessing script needs to establish TEST data
+
         # Saved model paths:
-        self.saved_model_folder = 'train_results_231017_171404'  # ZONA - the code here should take parameter of model file/folder OR "latest" which will search for latest file
+        self.saved_model_folder = 'train_results_231022_190226'  # ZONA - the code here should take parameter of model file/folder OR "latest" which will search for latest file
         self.saved_model_filename = 'saved_model.pth.tar'
 
-        # Testing dataset paths:
-        self.datasets_folder = 'data_uwmadison_01c_preprocessed_3d'  # ZONA - a) the preprocessing script needs to establish TEST data
         # Testing on validation or test set:
         # self.set = 'validation set'
         # csv file containing list of inputs for testing:
@@ -167,10 +168,10 @@ class TestCapsNet3D:
         df['case'] = df.id.map(lambda x: x.split('_')[1])
         df['day'] = df.id.map(lambda x: x.split('_')[3])
 
-        # remove faulty cases  # ZONA - this should be in the preprocessing step !!!
-        fault1 = 'case_7_day_0'  # zona
-        fault2 = 'case_81_day_30'  # zona
-        df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
+        # # remove faulty cases  # ZONA - this should be in the preprocessing step !!!
+        # fault1 = 'case_7_day_0'  # zona
+        # fault2 = 'case_81_day_30'  # zona
+        # df = df[~df['id'].str.contains(fault1) & ~df['id'].str.contains(fault2)].reset_index(drop=True)
         print(df.info())
 
         self.dataset = DatasetUWMadison3D(df, transforms=data_transforms['test'])
@@ -209,12 +210,17 @@ class TestCapsNet3D:
             self.model.cuda()
         self.model.eval()
 
-        folder_name = f"{CFG.project_root}/{CFG.ec2_results_folder}"
+        folder_name = join(CFG.project_root, CFG.ec2_results_folder)
         os.makedirs(folder_name, exist_ok=True)
 
-        for i, data_batch in enumerate(self.dataloader):
+        for data_batch in enumerate(self.dataloader):
 
-            inputs_cpu, targets_cpu, ids, cases, days = data_batch
+            foo, bar = data_batch
+            inputs_cpu = bar[0]
+            targets_cpu = bar[1]
+            cases = bar[2]
+            days = bar[3]
+            # inputs_cpu, targets_cpu, cases, days = data_batch
 
             inputs_cpu = torch.unsqueeze(inputs_cpu, 0)
             inputs_cpu = torch.permute(inputs_cpu, (1, 0, 2, 3, 4))
@@ -226,12 +232,12 @@ class TestCapsNet3D:
 
             with torch.no_grad():
                 outputs = self.model(inputs)
-                batch_losses = self.criterion(outputs, targets)
+            batch_losses = self.criterion(outputs, targets)
 
-                outputs = outputs.cpu().detach().numpy()
-
-                for output, id in zip(outputs, ids):
-                    np.save(f"{folder_name}/{id}.npy", output[0,:])
+            outputs = outputs.cpu().detach().numpy()
+            outputs = outputs.squeeze()
+            for x, case, day in zip(outputs, cases, days):
+                np.save(join(folder_name, f"case_{case}_day_{day}.npy"), x)
         
         print(f"wrote mask predictions to {folder_name}")
 
@@ -345,7 +351,8 @@ class TestCapsNet3D:
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def load_model(self):
-        checkpoint = torch.load(self.saved_model_path)
+        p = join(CFG.project_root, self.saved_model_folder, self.saved_model_filename)
+        checkpoint = torch.load(join(CFG.project_root, self.saved_model_folder, self.saved_model_filename))
         self.model.load_state_dict(checkpoint['state_dict'])
         print(f'>>>   Loaded the model from: {self.saved_model_path}   <<<')
 
